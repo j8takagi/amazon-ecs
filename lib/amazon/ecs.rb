@@ -128,21 +128,42 @@ module Amazon
       self.send_request(opts)
     end
 
+    # Request time
+    def self.timestamp
+      @timestamp
+    end
+
+    #Request URL
+    def self.request_url
+      prepare_url(self.options)
+    end
+
     # Generic send request to ECS REST service. You have to specify the :operation parameter.
     def self.send_request(opts)
-      # Include other required options
-      self.options[:timestamp] = Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+      begin
+        myopts = opts.dup
+        # Include other required options
+        @timestamp = Time.now.utc
+        self.options[:timestamp] = @timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+        myopts = self.options.merge(myopts) if self.options
 
-      opts = self.options.merge(opts) if self.options
+        request_url = prepare_url(myopts)
+        log "Request URL: #{request_url}"
 
-      request_url = prepare_url(opts)
-      log "Request URL: #{request_url}"
-
-      res = Net::HTTP.get_response(URI::parse(request_url))
-      unless res.kind_of? Net::HTTPSuccess
-        raise Amazon::RequestError, "HTTP Response: #{res.code} #{res.message}"
+        res = Net::HTTP.get_response(URI::parse(request_url))
+        unless res.kind_of? Net::HTTPSuccess
+          raise Amazon::RequestError, "HTTP Response: #{res.code} #{res.message}"
+        end
+        Response.new(res.body, @timestamp)
+      rescue =>ecs
+        if res.code.to_i == 503
+          retry
+        else
+          STDERR.puts ecs
+          STDERR.print "Request URL: ", request_url, "\n"
+          STDERR.puts
+        end
       end
-      Response.new(res.body)
     end
 
     def self.validate_request(opts)
@@ -153,16 +174,22 @@ module Amazon
     class Response
 
       # XML input is in string format
-      def initialize(xml)
+      def initialize(xml, timestamp=Time.now.utc)
         @doc = Nokogiri::XML(xml, nil, 'UTF-8')
         @doc.remove_namespaces!
         # @doc.xpath("//*").each { |elem| elem.name = elem.name.downcase }
         # @doc.xpath("//@*").each { |att| att.name = att.name.downcase }
+        @timestamp = timestamp
       end
 
       # Return Nokogiri::XML::Document object.
       def doc
         @doc
+      end
+
+      # Return Request timestamp
+      def timestamp
+        @timestamp
       end
 
       # Return true if request is valid.
